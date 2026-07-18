@@ -99,13 +99,31 @@ def update_naukri():
         print("Locating Resume Upload element...")
         upload_input = wait.until(EC.presence_of_element_located((By.ID, "attachCV")))
 
+        # Make sure element is interactable
+        driver.execute_script("arguments[0].style.display = 'block'; arguments[0].style.visibility = 'visible';", upload_input)
+
         print(f"Uploading resume: {RESUME_PATH}")
         upload_input.send_keys(str(RESUME_PATH))
 
-        print("Waiting for upload to complete...")
-        time.sleep(10)
+        print("Waiting for upload to process...")
+        time.sleep(8)
 
-        print("✅ Resume updated successfully")
+        # Try clicking any "Save" button that appears after upload
+        try:
+            save_btn = driver.find_element(By.XPATH, "//button[contains(text(), 'Save')]")
+            driver.execute_script("arguments[0].click();", save_btn)
+            print("Clicked Save button")
+            time.sleep(5)
+        except Exception:
+            print("No Save button found, upload may be auto-saved")
+
+        # Verify — check if resume name appears on page
+        page_source = driver.page_source
+        if "Your_Resume.pdf" in page_source or "updated" in page_source.lower():
+            print("Resume updated successfully")
+        else:
+            driver.save_screenshot(str(BASE_DIR / "upload_debug.png"))
+            print("Upload may have failed — check upload_debug.png")
 
     except Exception as e:
         print(f"❌ Error: {e}")
