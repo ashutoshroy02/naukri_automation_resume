@@ -11,6 +11,7 @@ from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.firefox.service import Service
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
+from webdriver_manager.firefox import GeckoDriverManager
 
 # ------------------------------------------------------------------
 # Load .env explicitly (this is the missing piece)
@@ -69,7 +70,7 @@ def update_naukri():
     options.set_preference("browser.tabs.remote.autostart", False)
     options.set_preference("browser.tabs.remote.autostart.2", False)
 
-    service = Service()
+    service = Service(GeckoDriverManager().install())
     driver = webdriver.Firefox(options=options, service=service)
 
     try:
