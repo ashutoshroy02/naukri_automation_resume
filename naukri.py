@@ -94,13 +94,13 @@ def update_naukri():
         # ---------------- UPLOAD ----------------
         time.sleep(3)
 
-        # Try lazyAttachCV first (modern Naukri), then attachCV
+        # Find file input — handles both regular Naukri and Naukri Campus
         upload_el = None
         selectors = [
-            (By.XPATH, "//*[contains(@class, 'upload')]//input[@value='Update resume']"),
-            (By.ID, "lazyAttachCV"),
-            (By.ID, "attachCV"),
+            (By.CSS_SELECTOR, "input[type='file'].upload-input"),
             (By.CSS_SELECTOR, "input[type='file']"),
+            (By.ID, "attachCV"),
+            (By.ID, "lazyAttachCV"),
         ]
         for by, value in selectors:
             upload_el = wait_for_element(driver, by, value, timeout=5)
@@ -112,49 +112,55 @@ def update_naukri():
             driver.save_screenshot(str(BASE_DIR / "no_upload_input.png"))
             raise Exception("File upload input not found on page")
 
-        driver.execute_script(
-            "arguments[0].style.display = 'block';"
-            "arguments[0].style.visibility = 'visible';"
-            "arguments[0].style.opacity = '1';",
-            upload_el
-        )
+        # Click "Update resume" button if present (Naukri Campus)
+        try:
+            update_btn = driver.find_element(By.CSS_SELECTOR, "button.upload-button")
+            driver.execute_script("arguments[0].click();", update_btn)
+            print("Clicked 'Update resume' button")
+            time.sleep(2)
+        except Exception:
+            pass
+
+        # Make inputs visible and re-find file input
+        driver.execute_script("""
+            var inputs = document.querySelectorAll("input[type='file']");
+            for (var i = 0; i < inputs.length; i++) {
+                inputs[i].style.display = 'block';
+                inputs[i].style.visibility = 'visible';
+                inputs[i].style.opacity = '1';
+            }
+        """)
 
         abs_path = str(RESUME_PATH.resolve())
         print(f"Uploading resume: {abs_path}")
-        upload_el.send_keys(abs_path)
 
-        # Dispatch change + input events so Naukri's JS picks it up
-        driver.execute_script("""
-            var input = arguments[0];
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-        """, upload_el)
+        # Re-find with fresh reference to avoid stale element
+        upload_el = driver.find_element(By.CSS_SELECTOR, "input[type='file'].upload-input")
+        upload_el.send_keys(abs_path)
 
         print("Waiting for upload to process...")
         time.sleep(10)
 
-        # Click save button
-        save_btn = wait_for_element(driver, By.XPATH, "//button[@type='button']", timeout=5)
-        if save_btn:
-            driver.execute_script("arguments[0].click();", save_btn)
-            print("Clicked save button")
-            time.sleep(5)
-        else:
-            print("No save button found — upload may be auto-saved")
-
         # ---------------- VERIFY ----------------
-        checkpoint = wait_for_element(driver, By.XPATH, "//*[contains(@class, 'updateOn')]", timeout=10)
-        if checkpoint:
-            last_updated = checkpoint.text
-            print(f"Profile last updated: {last_updated}")
-            today1 = datetime.today().strftime("%b %d, %Y")
-            today2 = datetime.today().strftime("%b %#d, %Y")
-            if today1 in last_updated or today2 in last_updated:
+        today = datetime.today().strftime("%b %#d, %Y")
+        try:
+            date_el = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".uploaded-date"))
+            )
+            last_updated = date_el.text
+            print(f"Resume status: {last_updated}")
+            if today in last_updated:
                 print("Resume updated successfully — today's date confirmed!")
             else:
-                print(f"WARNING: Date mismatch. Expected {today1} or {today2}, got: {last_updated}")
-        else:
-            print("Could not find last-updated element")
+                print(f"WARNING: Not today. Got: {last_updated}, expected: {today}")
+        except Exception:
+            # Fallback: check updateOn class (regular Naukri)
+            checkpoint = wait_for_element(driver, By.XPATH, "//*[contains(@class, 'updateOn')]", timeout=5)
+            if checkpoint:
+                last_updated = checkpoint.text
+                print(f"Profile last updated: {last_updated}")
+            else:
+                print("Could not verify upload date")
 
     except Exception as e:
         print(f"Error: {e}")
