@@ -2,6 +2,7 @@ import os
 import time
 import random
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -13,9 +14,6 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.firefox import GeckoDriverManager
 
-# ------------------------------------------------------------------
-# Load .env explicitly (this is the missing piece)
-# ------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
@@ -25,35 +23,34 @@ PASSWORD = os.getenv("PASSWORD")
 if not EMAIL or not PASSWORD:
     raise RuntimeError("EMAIL or PASSWORD not set. Check .env file")
 
-# Random interval: cron runs every 10 min, this skips ~75% of runs
-# Effective upload interval is random between 10-40 minutes
 MIN_INTERVAL = 10
 MAX_INTERVAL = 40
-SKIP_CHANCE = 1 - (MIN_INTERVAL / MAX_INTERVAL)  # ~0.75
+SKIP_CHANCE = 1 - (MIN_INTERVAL / MAX_INTERVAL)
 
-# ------------------------------------------------------------------
-# Paths
-# ------------------------------------------------------------------
 RESUME_PATH = BASE_DIR / "Your_Resume.pdf"
 FIREFOX_PROFILE = BASE_DIR / "naukri_profile"
 NAUKRI_PROFILE_URL = "https://www.naukri.com/mnjuser/profile"
 
+
 def get_firefox_binary():
-    """Finds the actual firefox executable, prioritizing native paths and snap."""
-    # Check snap real binary first (geckodriver hates wrapper scripts like /usr/bin/firefox or /snap/bin/firefox)
     if os.path.exists("/snap/firefox/current/usr/lib/firefox/firefox"):
         return "/snap/firefox/current/usr/lib/firefox/firefox"
-
-    # Check flatpak
     if os.path.exists("/var/lib/flatpak/app/org.mozilla.firefox"):
-        return "flatpak run org.mozilla.firefox" # Geckodriver might still complain here, but it's an option
-
-    # Fallback to shutil
+        return "flatpak run org.mozilla.firefox"
     ff_path = shutil.which("firefox")
     if ff_path:
         return ff_path
-
     return None
+
+
+def wait_for_element(driver, by, value, timeout=10):
+    try:
+        return WebDriverWait(driver, timeout).until(
+            EC.presence_of_element_located((by, value))
+        )
+    except Exception:
+        return None
+
 
 def update_naukri():
     options = Options()
@@ -61,12 +58,10 @@ def update_naukri():
     options.add_argument("-profile")
     options.add_argument(str(FIREFOX_PROFILE))
 
-    # Set the resolved binary location
     binary = get_firefox_binary()
     if binary:
         options.binary_location = binary
 
-    # Stability in background environments
     options.set_preference("browser.tabs.remote.autostart", False)
     options.set_preference("browser.tabs.remote.autostart.2", False)
 
@@ -86,8 +81,9 @@ def update_naukri():
             wait.until(EC.presence_of_element_located((By.ID, "usernameField"))).send_keys(EMAIL)
             driver.find_element(By.ID, "passwordField").send_keys(PASSWORD)
 
-            # Use explicit wait for the submit button and click it
-            login_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Login') and @type='submit']")))
+            login_btn = wait.until(EC.element_to_be_clickable(
+                (By.XPATH, "//button[contains(text(), 'Login') and @type='submit']")
+            ))
             driver.execute_script("arguments[0].click();", login_btn)
 
             wait.until(EC.invisibility_of_element_located((By.ID, "usernameField")))
@@ -96,71 +92,79 @@ def update_naukri():
             driver.get(NAUKRI_PROFILE_URL)
 
         # ---------------- UPLOAD ----------------
-        # Save page source for debugging
-        with open(str(BASE_DIR / "page_before.html"), "w", encoding="utf-8") as f:
-            f.write(driver.page_source)
-        driver.save_screenshot(str(BASE_DIR / "page_before.png"))
+        time.sleep(3)
 
-        print("Looking for resume upload section...")
-        # Try multiple selectors for the file input
-        upload_input = None
-        for selector in ["#attachCV", "input[type='file']", "//input[@type='file']"]:
-            try:
-                if selector.startswith("//"):
-                    upload_input = driver.find_element(By.XPATH, selector)
-                else:
-                    upload_input = driver.find_element(By.CSS_SELECTOR, selector)
-                print(f"Found upload input with: {selector}")
+        # Try lazyAttachCV first (modern Naukri), then attachCV
+        upload_el = None
+        selectors = [
+            (By.XPATH, "//*[contains(@class, 'upload')]//input[@value='Update resume']"),
+            (By.ID, "lazyAttachCV"),
+            (By.ID, "attachCV"),
+            (By.CSS_SELECTOR, "input[type='file']"),
+        ]
+        for by, value in selectors:
+            upload_el = wait_for_element(driver, by, value, timeout=5)
+            if upload_el:
+                print(f"Found upload input: {value}")
                 break
-            except Exception:
-                continue
 
-        if not upload_input:
-            print("Could not find file input. Saving page for debug...")
+        if not upload_el:
             driver.save_screenshot(str(BASE_DIR / "no_upload_input.png"))
             raise Exception("File upload input not found on page")
 
-        # Make sure element is interactable
-        driver.execute_script("arguments[0].style.display = 'block'; arguments[0].style.visibility = 'visible'; arguments[0].style.opacity = '1';", upload_input)
+        driver.execute_script(
+            "arguments[0].style.display = 'block';"
+            "arguments[0].style.visibility = 'visible';"
+            "arguments[0].style.opacity = '1';",
+            upload_el
+        )
 
-        print(f"Uploading resume: {RESUME_PATH}")
-        upload_input.send_keys(str(RESUME_PATH))
+        abs_path = str(RESUME_PATH.resolve())
+        print(f"Uploading resume: {abs_path}")
+        upload_el.send_keys(abs_path)
+
+        # Dispatch change + input events so Naukri's JS picks it up
+        driver.execute_script("""
+            var input = arguments[0];
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        """, upload_el)
 
         print("Waiting for upload to process...")
         time.sleep(10)
 
-        # Try clicking any "Save" button that appears after upload
-        try:
-            save_btn = driver.find_element(By.XPATH, "//button[contains(text(), 'Save')]")
+        # Click save button
+        save_btn = wait_for_element(driver, By.XPATH, "//button[@type='button']", timeout=5)
+        if save_btn:
             driver.execute_script("arguments[0].click();", save_btn)
-            print("Clicked Save button")
+            print("Clicked save button")
             time.sleep(5)
-        except Exception:
-            print("No Save button found, upload may be auto-saved")
-
-        # Save page source after upload
-        with open(str(BASE_DIR / "page_after.html"), "w", encoding="utf-8") as f:
-            f.write(driver.page_source)
-        driver.save_screenshot(str(BASE_DIR / "page_after.png"))
-
-        # Verify — check if resume name appears on page or success message
-        page_source = driver.page_source
-        if "Your_Resume.pdf" in page_source or "uploaded" in page_source.lower() or "success" in page_source.lower():
-            print("Resume upload appears successful")
         else:
-            print("Upload verification failed — check debug artifacts")
+            print("No save button found — upload may be auto-saved")
+
+        # ---------------- VERIFY ----------------
+        checkpoint = wait_for_element(driver, By.XPATH, "//*[contains(@class, 'updateOn')]", timeout=10)
+        if checkpoint:
+            last_updated = checkpoint.text
+            print(f"Profile last updated: {last_updated}")
+            today1 = datetime.today().strftime("%b %d, %Y")
+            today2 = datetime.today().strftime("%b %#d, %Y")
+            if today1 in last_updated or today2 in last_updated:
+                print("Resume updated successfully — today's date confirmed!")
+            else:
+                print(f"WARNING: Date mismatch. Expected {today1} or {today2}, got: {last_updated}")
+        else:
+            print("Could not find last-updated element")
 
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"Error: {e}")
         driver.save_screenshot(str(BASE_DIR / "error_screenshot.png"))
-        print(f"📸 Screenshot saved to {BASE_DIR / 'error_screenshot.png'}")
         raise
     finally:
         driver.quit()
 
 
 if __name__ == "__main__":
-    # Random skip to make effective interval 10-40 min
     if random.random() < SKIP_CHANCE:
         skip_minutes = random.randint(MIN_INTERVAL, MAX_INTERVAL)
         print(f"Skipped this run (next ~{skip_minutes} min)")
