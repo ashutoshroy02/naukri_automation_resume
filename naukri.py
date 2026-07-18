@@ -96,17 +96,38 @@ def update_naukri():
             driver.get(NAUKRI_PROFILE_URL)
 
         # ---------------- UPLOAD ----------------
-        print("Locating Resume Upload element...")
-        upload_input = wait.until(EC.presence_of_element_located((By.ID, "attachCV")))
+        # Save page source for debugging
+        with open(str(BASE_DIR / "page_before.html"), "w", encoding="utf-8") as f:
+            f.write(driver.page_source)
+        driver.save_screenshot(str(BASE_DIR / "page_before.png"))
+
+        print("Looking for resume upload section...")
+        # Try multiple selectors for the file input
+        upload_input = None
+        for selector in ["#attachCV", "input[type='file']", "//input[@type='file']"]:
+            try:
+                if selector.startswith("//"):
+                    upload_input = driver.find_element(By.XPATH, selector)
+                else:
+                    upload_input = driver.find_element(By.CSS_SELECTOR, selector)
+                print(f"Found upload input with: {selector}")
+                break
+            except Exception:
+                continue
+
+        if not upload_input:
+            print("Could not find file input. Saving page for debug...")
+            driver.save_screenshot(str(BASE_DIR / "no_upload_input.png"))
+            raise Exception("File upload input not found on page")
 
         # Make sure element is interactable
-        driver.execute_script("arguments[0].style.display = 'block'; arguments[0].style.visibility = 'visible';", upload_input)
+        driver.execute_script("arguments[0].style.display = 'block'; arguments[0].style.visibility = 'visible'; arguments[0].style.opacity = '1';", upload_input)
 
         print(f"Uploading resume: {RESUME_PATH}")
         upload_input.send_keys(str(RESUME_PATH))
 
         print("Waiting for upload to process...")
-        time.sleep(8)
+        time.sleep(10)
 
         # Try clicking any "Save" button that appears after upload
         try:
@@ -117,13 +138,17 @@ def update_naukri():
         except Exception:
             print("No Save button found, upload may be auto-saved")
 
-        # Verify — check if resume name appears on page
+        # Save page source after upload
+        with open(str(BASE_DIR / "page_after.html"), "w", encoding="utf-8") as f:
+            f.write(driver.page_source)
+        driver.save_screenshot(str(BASE_DIR / "page_after.png"))
+
+        # Verify — check if resume name appears on page or success message
         page_source = driver.page_source
-        if "Your_Resume.pdf" in page_source or "updated" in page_source.lower():
-            print("Resume updated successfully")
+        if "Your_Resume.pdf" in page_source or "uploaded" in page_source.lower() or "success" in page_source.lower():
+            print("Resume upload appears successful")
         else:
-            driver.save_screenshot(str(BASE_DIR / "upload_debug.png"))
-            print("Upload may have failed — check upload_debug.png")
+            print("Upload verification failed — check debug artifacts")
 
     except Exception as e:
         print(f"❌ Error: {e}")
