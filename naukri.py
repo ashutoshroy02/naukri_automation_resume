@@ -23,9 +23,9 @@ PASSWORD = os.getenv("PASSWORD")
 if not EMAIL or not PASSWORD:
     raise RuntimeError("EMAIL or PASSWORD not set. Check .env file")
 
-MIN_INTERVAL = 10
-MAX_INTERVAL = 40
-SKIP_CHANCE = 1 - (MIN_INTERVAL / MAX_INTERVAL)
+MIN_INTERVAL = 360   # 6 hours in minutes
+MAX_INTERVAL = 720   # 12 hours in minutes
+SKIP_CHANCE = 1 - (MIN_INTERVAL / MAX_INTERVAL)  # ~0.5
 
 RESUME_PATH = BASE_DIR / "Your_Resume.pdf"
 FIREFOX_PROFILE = BASE_DIR / "naukri_profile"
