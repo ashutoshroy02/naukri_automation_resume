@@ -1,5 +1,6 @@
 import os
 import time
+import random
 import shutil
 from pathlib import Path
 
@@ -22,6 +23,12 @@ PASSWORD = os.getenv("PASSWORD")
 
 if not EMAIL or not PASSWORD:
     raise RuntimeError("EMAIL or PASSWORD not set. Check .env file")
+
+# Random interval: cron runs every 10 min, this skips ~75% of runs
+# Effective upload interval is random between 10-40 minutes
+MIN_INTERVAL = 10
+MAX_INTERVAL = 40
+SKIP_CHANCE = 1 - (MIN_INTERVAL / MAX_INTERVAL)  # ~0.75
 
 # ------------------------------------------------------------------
 # Paths
@@ -109,5 +116,14 @@ def update_naukri():
 
 
 if __name__ == "__main__":
+    # Random skip to make effective interval 10-40 min
+    if random.random() < SKIP_CHANCE:
+        skip_minutes = random.randint(MIN_INTERVAL, MAX_INTERVAL)
+        print(f"Skipped this run (next ~{skip_minutes} min)")
+        exit(0)
+
+    if not RESUME_PATH.exists():
+        raise FileNotFoundError(f"Resume not found: {RESUME_PATH}")
+
     FIREFOX_PROFILE.mkdir(exist_ok=True)
     update_naukri()

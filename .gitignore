@@ -1,0 +1,6 @@
+.env
+naukri_profile/
+error_screenshot.png
+__pycache__/
+*.pyc
+venv/
