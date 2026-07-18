@@ -1,6 +1,7 @@
 import os
 import time
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -97,7 +98,34 @@ def update_naukri():
         print("Waiting for upload to complete...")
         time.sleep(10)
 
-        print("✅ Resume updated successfully")
+        # ---------------- VERIFY ----------------
+        today = datetime.today().strftime("%b %#d, %Y")
+        verified = False
+
+        # Check uploaded-date (Naukri Campus) or updateOn (regular Naukri)
+        for selector in [".uploaded-date", "//*[contains(@class, 'updateOn')]"]:
+            try:
+                if selector.startswith("/"):
+                    el = WebDriverWait(driver, 10).until(
+                        EC.presence_of_element_located((By.XPATH, selector))
+                    )
+                else:
+                    el = WebDriverWait(driver, 10).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                    )
+                last_updated = el.text
+                print(f"Resume status: {last_updated}")
+                if today in last_updated:
+                    print("Resume updated successfully — today's date confirmed!")
+                    verified = True
+                else:
+                    print(f"WARNING: Date mismatch. Expected {today}, got: {last_updated}")
+                break
+            except Exception:
+                continue
+
+        if not verified:
+            print("Could not verify upload date — check manually")
 
     except Exception as e:
         print(f"❌ Error: {e}")
